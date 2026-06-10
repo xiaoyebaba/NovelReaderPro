@@ -37,6 +37,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        initializePlatform(this)
         setContent {
             NovelReaderProApp(platformName = "Android") { callback ->
                 importCallback = callback
@@ -58,7 +59,18 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onKeyDown(keyCode: Int, event: KeyEvent?): Boolean {
-        // 先占位接入：后续把音量键事件传给 ReaderController 翻页。
-        return if (keyCode == KeyEvent.KEYCODE_VOLUME_UP || keyCode == KeyEvent.KEYCODE_VOLUME_DOWN) true else super.onKeyDown(keyCode, event)
+        if (ReaderKeyBridge.volumeKeyEnabled) {
+            when (keyCode) {
+                KeyEvent.KEYCODE_VOLUME_UP -> {
+                    ReaderKeyBridge.onPrevious?.invoke()
+                    return ReaderKeyBridge.onPrevious != null
+                }
+                KeyEvent.KEYCODE_VOLUME_DOWN -> {
+                    ReaderKeyBridge.onNext?.invoke()
+                    return ReaderKeyBridge.onNext != null
+                }
+            }
+        }
+        return super.onKeyDown(keyCode, event)
     }
 }
