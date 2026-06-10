@@ -1,17 +1,13 @@
 package com.zhujian.reader
 
-import android.app.Activity
 import android.os.Bundle
 import android.view.KeyEvent
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
-import java.io.BufferedReader
-import java.io.InputStreamReader
 
 class MainActivity : ComponentActivity() {
-    private var pendingImport: (((String, String) -> Unit) -> Unit)? = null
-    private var importCallback: ((String, String) -> Unit)? = null
+    private var importCallback: ((String, ByteArray) -> Unit)? = null
 
     private val openDocument = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         val callback = importCallback ?: return@registerForActivityResult
@@ -20,16 +16,8 @@ class MainActivity : ComponentActivity() {
                 val idx = cursor.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
                 if (idx >= 0 && cursor.moveToFirst()) cursor.getString(idx) else null
             } ?: "本地导入.txt"
-            val text = runCatching {
-                contentResolver.openInputStream(uri)?.use { input ->
-                    BufferedReader(InputStreamReader(input, Charsets.UTF_8)).readText()
-                }.orEmpty()
-            }.getOrElse {
-                contentResolver.openInputStream(uri)?.use { input ->
-                    BufferedReader(InputStreamReader(input, charset("GBK"))).readText()
-                }.orEmpty()
-            }
-            callback(name.substringBeforeLast('.'), text)
+            val bytes = contentResolver.openInputStream(uri)?.use { input -> input.readBytes() } ?: ByteArray(0)
+            callback(name, bytes)
         }
     }
 
@@ -39,7 +27,7 @@ class MainActivity : ComponentActivity() {
         setContent {
             NovelReaderProApp(platformName = "Android") { callback ->
                 importCallback = callback
-                openDocument.launch(arrayOf("text/plain", "application/octet-stream", "*/*"))
+                openDocument.launch(arrayOf("text/plain", "application/epub+zip", "application/pdf", "application/octet-stream", "*/*"))
             }
         }
     }
