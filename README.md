@@ -1,8 +1,8 @@
-# 竹简阅读 Pro
+# 青简阅读
 
-竹简阅读 Pro 是一个从零开始的新本地电子书阅读器项目，使用 Kotlin + Compose Multiplatform 开发。
+青简阅读是一个从零开始的新本地电子书阅读器项目，使用 Kotlin + Compose Multiplatform 开发。
 
-## 当前版本：0.1.1
+## 当前版本：0.2.0
 
 已实现：
 

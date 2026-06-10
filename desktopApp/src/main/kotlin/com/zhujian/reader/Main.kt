@@ -7,7 +7,7 @@ import java.awt.Frame
 import java.io.File
 
 fun main() = application {
-    Window(onCloseRequest = ::exitApplication, title = "竹简阅读 Pro") {
+    Window(onCloseRequest = ::exitApplication, title = "青简阅读") {
         NovelReaderProApp(platformName = "Windows") { callback ->
             val dialog = FileDialog(null as Frame?, "选择 TXT 小说", FileDialog.LOAD)
             dialog.file = "*.txt"
