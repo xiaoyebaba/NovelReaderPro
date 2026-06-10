@@ -36,6 +36,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -53,27 +54,29 @@ import kotlin.math.abs
 import kotlin.math.roundToInt
 
 private const val APP_NAME = "青简阅读"
+private const val APP_VERSION = "0.3.0"
 
-private data class Book(
+data class Book(
     val id: String,
     val title: String,
     val author: String = "本地书籍",
     val format: BookFormat,
     val sourceText: String,
+    val fileName: String = "",
     val chapters: List<Chapter>,
     var progressChapter: Int = 0,
     var isPinned: Boolean = false,
     val bookmarks: MutableList<Bookmark> = mutableListOf(),
 )
 
-private enum class BookFormat { TXT, EPUB, PDF, MOBI, AZW3 }
+enum class BookFormat { TXT, EPUB, PDF, MOBI, AZW3 }
 
-private data class Chapter(
+data class Chapter(
     val title: String,
     val paragraphs: List<String>,
 )
 
-private data class Bookmark(
+data class Bookmark(
     val chapterIndex: Int,
     val chapterTitle: String,
     val createdAt: Long,
@@ -114,7 +117,7 @@ object ReaderKeyBridge {
 @Composable
 fun NovelReaderProApp(
     platformName: String,
-    onImportTxt: ((title: String, content: String) -> Unit) -> Unit,
+    onImportFile: ((fileName: String, bytes: ByteArray) -> Unit) -> Unit,
 ) {
     val books = remember { mutableStateListOf<Book>().apply { addAll(loadBooks()) } }
     var selectedBook by remember { mutableStateOf<Book?>(null) }
@@ -136,8 +139,8 @@ fun NovelReaderProApp(
                     books = books.sortedWith(compareByDescending<Book> { it.isPinned }.thenBy { it.title }),
                     onOpen = { selectedBook = it },
                     onImport = {
-                        onImportTxt { title, content ->
-                            val parsed = parseTxtBook(title, content)
+                        onImportFile { fileName, bytes ->
+                            val parsed = parseImportedBook(fileName, bytes)
                             books.add(0, parsed)
                             selectedBook = parsed
                             persistAll()
@@ -188,20 +191,21 @@ private fun BookshelfScreen(
             TopAppBar(
                 title = { Text("$APP_NAME · $platformName") },
                 actions = {
+                    TextButton(onClick = { openLatestReleasePage() }) { Text("更新") }
                     IconButton(onClick = onImport) { Icon(Icons.Default.Add, contentDescription = "导入") }
                 },
             )
         },
     ) { padding ->
         Column(modifier = Modifier.fillMaxSize().padding(padding).padding(16.dp)) {
-            Text("v0.2.0：本地书架、阅读进度、书签、排版设置已可保存；音量键可翻章。", color = Color.Gray)
+            Text("v$APP_VERSION：TXT/EPUB 阅读、PDF 导入占位、书架/进度/书签保存、检查更新。", color = Color.Gray)
             Spacer(Modifier.height(16.dp))
             if (books.isEmpty()) {
                 Card(modifier = Modifier.fillMaxWidth()) {
                     Column(Modifier.padding(20.dp), horizontalAlignment = Alignment.CenterHorizontally) {
                         Text("书架还是空的")
                         Spacer(Modifier.height(8.dp))
-                        Button(onClick = onImport) { Text("导入 TXT 小说") }
+                        Button(onClick = onImport) { Text("导入 TXT / EPUB / PDF") }
                     }
                 }
             } else {
@@ -396,7 +400,7 @@ private fun ReaderSettingsPanel(settings: ReaderSettings, onChange: (ReaderSetti
     }
 }
 
-private fun parseTxtBook(title: String, content: String): Book {
+fun parseTxtBook(title: String, content: String, fileName: String = ""): Book {
     val normalized = content.replace("\r\n", "\n").replace('\r', '\n')
     val lines = normalized.lines().map { it.trim() }.filter { it.isNotBlank() && !it.contains("最新网址", ignoreCase = true) }
     val chapterTitleRegex = Regex("^(第[零一二三四五六七八九十百千万0-9]+[章节回卷集部].*|Chapter\\s+\\d+.*|[0-9]+[、.].*)$", setOf(RegexOption.IGNORE_CASE))
@@ -425,7 +429,7 @@ private fun parseTxtBook(title: String, content: String): Book {
     flush()
     if (chapters.isEmpty()) chapters.add(Chapter("正文", lines.ifEmpty { listOf("这本书暂无可读取文本。") }))
     val stableId = "txt-${abs((title + content.length.toString()).hashCode())}-${currentTimestamp()}"
-    return Book(id = stableId, title = title.ifBlank { "未命名 TXT" }, format = BookFormat.TXT, sourceText = content, chapters = chapters)
+    return Book(id = stableId, title = title.ifBlank { "未命名 TXT" }, format = BookFormat.TXT, sourceText = content, fileName = fileName, chapters = chapters)
 }
 
 private fun searchBook(book: Book, query: String): List<Pair<Int, String>> {
@@ -446,7 +450,7 @@ private fun sampleBook(): Book = parseTxtBook(
         软件目标是纯净、离线、无广告、权限精简。
 
         第二章 后续路线
-        下一步会继续加入 EPUB、PDF、书架分类、听书和批注笔记。
+        v0.3.0 会加入 EPUB 文本解析、PDF 导入识别，以及 GitHub Releases 最新版获取入口。
         功能会按版本逐步做扎实，不做臃肿半成品。
     """.trimIndent(),
 )
@@ -490,6 +494,7 @@ private fun encodeBook(book: Book): String = listOf(
     "title=${esc(book.title)}",
     "author=${esc(book.author)}",
     "format=${book.format.name}",
+    "fileName=${esc(book.fileName)}",
     "progressChapter=${book.progressChapter}",
     "isPinned=${book.isPinned}",
     "bookmarks=${esc(book.bookmarks.joinToString(";") { "${it.chapterIndex},${esc(it.chapterTitle)},${it.createdAt}" })}",
@@ -503,6 +508,8 @@ private fun decodeBook(block: String): Book? {
     val book = parseTxtBook(title, source).copy(
         id = unesc(map["id"] ?: title),
         author = unesc(map["author"] ?: "本地书籍"),
+        format = map["format"]?.let { runCatching { BookFormat.valueOf(it) }.getOrNull() } ?: BookFormat.TXT,
+        fileName = unesc(map["fileName"].orEmpty()),
         progressChapter = map["progressChapter"]?.toIntOrNull() ?: 0,
         isPinned = map["isPinned"]?.toBooleanStrictOrNull() ?: false,
     )
@@ -534,6 +541,26 @@ private fun unesc(value: String): String = value
 
 private fun Float.roundToOneDecimal(): String = (this * 10).roundToInt().let { "${it / 10}.${it % 10}" }
 
+fun parsePdfPlaceholder(fileName: String): Book = Book(
+    id = "pdf-${abs(fileName.hashCode())}-${currentTimestamp()}",
+    title = fileName.substringBeforeLast('.').ifBlank { "PDF 文档" },
+    format = BookFormat.PDF,
+    sourceText = "",
+    fileName = fileName,
+    chapters = listOf(
+        Chapter(
+            "PDF 阅读",
+            listOf(
+                "已成功导入 PDF：$fileName",
+                "当前 v0.3.0 先完成 PDF 文件识别、入库、进度/书签框架接入。",
+                "下一步会接入 PDF 页面渲染器，实现真正翻页、缩放和页码记忆。"
+            )
+        )
+    )
+)
+
+expect fun parseImportedBook(fileName: String, bytes: ByteArray): Book
+expect fun openLatestReleasePage()
 expect fun currentTimestamp(): Long
 expect fun persistentLoad(key: String): String?
 expect fun persistentSave(key: String, value: String)
