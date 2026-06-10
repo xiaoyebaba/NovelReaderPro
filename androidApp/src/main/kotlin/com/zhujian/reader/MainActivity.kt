@@ -3,8 +3,6 @@ package com.zhujian.reader
 import android.app.Activity
 import android.os.Bundle
 import android.view.KeyEvent
-import android.view.WindowInsets
-import android.view.WindowInsetsController
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
@@ -42,18 +40,6 @@ class MainActivity : ComponentActivity() {
             NovelReaderProApp(platformName = "Android") { callback ->
                 importCallback = callback
                 openDocument.launch(arrayOf("text/plain", "application/octet-stream", "*/*"))
-            }
-        }
-        hideSystemBarsSafely()
-    }
-
-    private fun hideSystemBarsSafely() {
-        // 在 Android 16KB/新版本模拟器上，onCreate 早期直接访问 window.insetsController
-        // 可能因为 DecorView 尚未完全 attach 而空指针。延后到 DecorView 可用后再隐藏状态栏。
-        window.decorView.post {
-            window.insetsController?.let { controller ->
-                controller.hide(WindowInsets.Type.statusBars())
-                controller.systemBarsBehavior = WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
             }
         }
     }
