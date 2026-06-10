@@ -54,7 +54,7 @@ import kotlin.math.abs
 import kotlin.math.roundToInt
 
 private const val APP_NAME = "青简阅读"
-private const val APP_VERSION = "0.3.0"
+private const val APP_VERSION = "0.4.0"
 
 data class Book(
     val id: String,
@@ -198,7 +198,7 @@ private fun BookshelfScreen(
         },
     ) { padding ->
         Column(modifier = Modifier.fillMaxSize().padding(padding).padding(16.dp)) {
-            Text("v$APP_VERSION：TXT/EPUB 阅读、PDF 导入占位、书架/进度/书签保存、检查更新。", color = Color.Gray)
+            Text("v$APP_VERSION：优化 EPUB 目录/标题与持久化；旧版本 Release 保留不覆盖。", color = Color.Gray)
             Spacer(Modifier.height(16.dp))
             if (books.isEmpty()) {
                 Card(modifier = Modifier.fillMaxWidth()) {
@@ -450,7 +450,7 @@ private fun sampleBook(): Book = parseTxtBook(
         软件目标是纯净、离线、无广告、权限精简。
 
         第二章 后续路线
-        v0.3.0 会加入 EPUB 文本解析、PDF 导入识别，以及 GitHub Releases 最新版获取入口。
+        v0.4.0 优化 EPUB 目录、标题和重启后的章节持久化；Release 每次新建，不覆盖旧版本。
         功能会按版本逐步做扎实，不做臃肿半成品。
     """.trimIndent(),
 )
@@ -499,17 +499,31 @@ private fun encodeBook(book: Book): String = listOf(
     "isPinned=${book.isPinned}",
     "bookmarks=${esc(book.bookmarks.joinToString(";") { "${it.chapterIndex},${esc(it.chapterTitle)},${it.createdAt}" })}",
     "sourceText=${esc(book.sourceText)}",
+    "chapters=${esc(encodeChapters(book.chapters))}",
 ).joinToString("\n")
 
 private fun decodeBook(block: String): Book? {
     val map = block.lines().mapNotNull { line -> line.substringBefore('=', "").takeIf { it.isNotEmpty() }?.let { it to line.substringAfter('=') } }.toMap()
     val title = unesc(map["title"] ?: return null)
-    val source = unesc(map["sourceText"] ?: return null)
-    val book = parseTxtBook(title, source).copy(
+    val source = unesc(map["sourceText"] ?: "")
+    val format = map["format"]?.let { runCatching { BookFormat.valueOf(it) }.getOrNull() } ?: BookFormat.TXT
+    val savedChapters = decodeChapters(unesc(map["chapters"].orEmpty()))
+    val fallback = if (format == BookFormat.TXT) parseTxtBook(title, source) else Book(
         id = unesc(map["id"] ?: title),
+        title = title,
         author = unesc(map["author"] ?: "本地书籍"),
-        format = map["format"]?.let { runCatching { BookFormat.valueOf(it) }.getOrNull() } ?: BookFormat.TXT,
+        format = format,
+        sourceText = source,
         fileName = unesc(map["fileName"].orEmpty()),
+        chapters = savedChapters.ifEmpty { listOf(Chapter(title, listOf("这本书的章节缓存为空，请重新导入文件。"))) },
+    )
+    val book = fallback.copy(
+        id = unesc(map["id"] ?: title),
+        title = title,
+        author = unesc(map["author"] ?: "本地书籍"),
+        format = format,
+        fileName = unesc(map["fileName"].orEmpty()),
+        chapters = savedChapters.ifEmpty { fallback.chapters },
         progressChapter = map["progressChapter"]?.toIntOrNull() ?: 0,
         isPinned = map["isPinned"]?.toBooleanStrictOrNull() ?: false,
     )
@@ -521,6 +535,20 @@ private fun decodeBook(block: String): Book? {
         }
     }
     return book
+}
+
+private fun encodeChapters(chapters: List<Chapter>): String = chapters.joinToString("\n---CHAPTER---\n") { chapter ->
+    "title=${esc(chapter.title)}\nparagraphs=${esc(chapter.paragraphs.joinToString("\n---PARA---\n"))}"
+}
+
+private fun decodeChapters(raw: String): List<Chapter> {
+    if (raw.isBlank()) return emptyList()
+    return raw.split("\n---CHAPTER---\n").mapNotNull { block ->
+        val map = block.lines().mapNotNull { line -> line.substringBefore('=', "").takeIf { it.isNotEmpty() }?.let { it to line.substringAfter('=') } }.toMap()
+        val title = unesc(map["title"].orEmpty()).ifBlank { "未命名章节" }
+        val paragraphs = unesc(map["paragraphs"].orEmpty()).split("\n---PARA---\n").map { it.trim() }.filter { it.isNotBlank() }
+        if (paragraphs.isEmpty()) null else Chapter(title, paragraphs)
+    }
 }
 
 private fun esc(value: String): String = value
@@ -552,7 +580,7 @@ fun parsePdfPlaceholder(fileName: String): Book = Book(
             "PDF 阅读",
             listOf(
                 "已成功导入 PDF：$fileName",
-                "当前 v0.3.0 先完成 PDF 文件识别、入库、进度/书签框架接入。",
+                "当前 v0.4.0 先完成 PDF 文件识别、入库、进度/书签框架接入。",
                 "下一步会接入 PDF 页面渲染器，实现真正翻页、缩放和页码记忆。"
             )
         )
