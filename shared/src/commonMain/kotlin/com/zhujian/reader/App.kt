@@ -24,6 +24,7 @@ import androidx.compose.material.icons.filled.FormatSize
 import androidx.compose.material.icons.filled.PushPin
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -54,7 +55,7 @@ import kotlin.math.abs
 import kotlin.math.roundToInt
 
 private const val APP_NAME = "青简阅读"
-private const val APP_VERSION = "0.4.0"
+private const val APP_VERSION = "0.5.0"
 
 data class Book(
     val id: String,
@@ -198,7 +199,7 @@ private fun BookshelfScreen(
         },
     ) { padding ->
         Column(modifier = Modifier.fillMaxSize().padding(padding).padding(16.dp)) {
-            Text("v$APP_VERSION：优化 EPUB 目录/标题与持久化；旧版本 Release 保留不覆盖。", color = Color.Gray)
+            Text("v$APP_VERSION：优化小说阅读体验：正文优先、点击呼出菜单、搜索/书签/设置按需打开。", color = Color.Gray)
             Spacer(Modifier.height(16.dp))
             if (books.isEmpty()) {
                 Card(modifier = Modifier.fillMaxWidth()) {
@@ -248,8 +249,11 @@ private fun ReaderScreen(
     onBack: () -> Unit,
 ) {
     var chapterIndex by remember(book.id) { mutableStateOf(book.progressChapter.coerceIn(0, book.chapters.lastIndex.coerceAtLeast(0))) }
+    var showControls by remember { mutableStateOf(false) }
     var showSettings by remember { mutableStateOf(false) }
     var showBookmarks by remember { mutableStateOf(false) }
+    var showSearch by remember { mutableStateOf(false) }
+    var showUpdateDialog by remember { mutableStateOf(false) }
     var query by remember { mutableStateOf("") }
     val chapter = book.chapters.getOrNull(chapterIndex)
     val total = book.chapters.size.coerceAtLeast(1)
@@ -275,47 +279,104 @@ private fun ReaderScreen(
     ReaderKeyBridge.onNext = { goNext() }
     book.progressChapter = chapterIndex
 
+    if (showUpdateDialog) {
+        AlertDialog(
+            onDismissRequest = { showUpdateDialog = false },
+            title = { Text("检查更新") },
+            text = { Text("将打开 GitHub 最新版本下载页。以后会继续升级为自动比对版本号和一键下载。") },
+            confirmButton = {
+                TextButton(onClick = { showUpdateDialog = false; openLatestReleasePage() }) { Text("打开下载页") }
+            },
+            dismissButton = { TextButton(onClick = { showUpdateDialog = false }) { Text("取消") } },
+        )
+    }
+
     Scaffold(
         topBar = {
-            TopAppBar(
-                title = { Text(book.title) },
-                navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.Default.ArrowBack, contentDescription = "返回") } },
-                actions = {
-                    IconButton(onClick = { showBookmarks = !showBookmarks }) { Icon(Icons.Default.Bookmark, contentDescription = "书签") }
-                    IconButton(onClick = { showSettings = !showSettings }) { Icon(Icons.Default.Settings, contentDescription = "设置") }
-                },
-            )
+            if (showControls) {
+                TopAppBar(
+                    title = { Text(book.title) },
+                    navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.Default.ArrowBack, contentDescription = "返回") } },
+                    actions = {
+                        IconButton(onClick = { showSearch = !showSearch; showBookmarks = false; showSettings = false }) { Icon(Icons.Default.Search, contentDescription = "搜索") }
+                        IconButton(onClick = { showBookmarks = !showBookmarks; showSearch = false; showSettings = false }) { Icon(Icons.Default.Bookmark, contentDescription = "书签") }
+                        IconButton(onClick = { showSettings = !showSettings; showSearch = false; showBookmarks = false }) { Icon(Icons.Default.Settings, contentDescription = "设置") }
+                    },
+                )
+            }
+        },
+        bottomBar = {
+            if (showControls) {
+                Card(modifier = Modifier.fillMaxWidth().padding(8.dp)) {
+                    Column(Modifier.padding(12.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                            Button(onClick = { goPrevious() }, enabled = chapterIndex > 0) { Text("上一章") }
+                            Spacer(Modifier.width(12.dp))
+                            Column(modifier = Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally) {
+                                Text("${chapterIndex + 1}/$total 章")
+                                Text("${((chapterIndex + 1) * 100f / total).roundToInt()}%", color = Color.Gray, fontSize = 13.sp)
+                            }
+                            Spacer(Modifier.width(12.dp))
+                            Button(onClick = { goNext() }, enabled = chapterIndex < book.chapters.lastIndex) { Text("下一章") }
+                        }
+                        Spacer(Modifier.height(8.dp))
+                        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                            val bookmarked = book.bookmarks.any { it.chapterIndex == chapterIndex }
+                            TextButton(onClick = {
+                                if (bookmarked) book.bookmarks.removeAll { it.chapterIndex == chapterIndex }
+                                else book.bookmarks.add(Bookmark(chapterIndex, chapter?.title ?: "第${chapterIndex + 1}章", currentTimestamp()))
+                                onBookChanged()
+                            }) { Text(if (bookmarked) "取消书签" else "加入书签") }
+                            Spacer(Modifier.weight(1f))
+                            TextButton(onClick = { showUpdateDialog = true }) { Text("检查更新") }
+                        }
+                    }
+                }
+            }
         },
     ) { padding ->
         Column(
-            modifier = Modifier.fillMaxSize().background(settings.theme.background).padding(padding).padding(settings.margin.dp),
+            modifier = Modifier
+                .fillMaxSize()
+                .background(settings.theme.background)
+                .padding(padding)
+                .padding(settings.margin.dp)
+                .clickable { showControls = !showControls },
         ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Button(onClick = { goPrevious() }, enabled = chapterIndex > 0) { Text("上一章") }
-                Spacer(Modifier.width(8.dp))
-                Text("${chapterIndex + 1}/$total · ${((chapterIndex + 1) * 100f / total).roundToInt()}%", color = settings.theme.foreground)
-                Spacer(Modifier.width(8.dp))
-                Button(onClick = { goNext() }, enabled = chapterIndex < book.chapters.lastIndex) { Text("下一章") }
-                Spacer(Modifier.weight(1f))
-                val bookmarked = book.bookmarks.any { it.chapterIndex == chapterIndex }
-                IconButton(onClick = {
-                    if (bookmarked) book.bookmarks.removeAll { it.chapterIndex == chapterIndex }
-                    else book.bookmarks.add(Bookmark(chapterIndex, chapter?.title ?: "第${chapterIndex + 1}章", currentTimestamp()))
-                    onBookChanged()
-                }) {
-                    Icon(if (bookmarked) Icons.Default.Bookmark else Icons.Default.BookmarkBorder, contentDescription = "添加/取消书签", tint = settings.theme.foreground)
+            if (showSearch) {
+                OutlinedTextField(
+                    value = query,
+                    onValueChange = { query = it },
+                    modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp),
+                    leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
+                    label = { Text("全书搜索关键词") },
+                    singleLine = true,
+                )
+                if (query.isNotBlank()) {
+                    val results = searchBook(book, query).take(6)
+                    Card(modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp)) {
+                        Column(Modifier.padding(10.dp)) {
+                            results.forEach { result ->
+                                Text(
+                                    text = "第${result.first + 1}章：${result.second}",
+                                    modifier = Modifier.clickable { chapterIndex = result.first; book.progressChapter = chapterIndex; onBookChanged(); showSearch = false }.padding(vertical = 4.dp),
+                                    color = Color(0xFF1E88E5),
+                                    fontSize = 14.sp,
+                                )
+                            }
+                            if (results.isEmpty()) Text("没有找到匹配内容", color = Color.Gray)
+                        }
+                    }
                 }
             }
 
-            if (showSettings) ReaderSettingsPanel(settings = settings, onChange = onSettingsChange)
-
             if (showBookmarks) {
-                Card(modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
+                Card(modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp)) {
                     Column(Modifier.padding(12.dp)) {
                         Text("书签", style = MaterialTheme.typography.titleMedium)
                         if (book.bookmarks.isEmpty()) Text("当前没有书签", color = Color.Gray)
                         book.bookmarks.sortedBy { it.chapterIndex }.forEach { mark ->
-                            Row(modifier = Modifier.fillMaxWidth().clickable { chapterIndex = mark.chapterIndex; book.progressChapter = chapterIndex; onBookChanged() }.padding(vertical = 6.dp)) {
+                            Row(modifier = Modifier.fillMaxWidth().clickable { chapterIndex = mark.chapterIndex; book.progressChapter = chapterIndex; onBookChanged(); showBookmarks = false }.padding(vertical = 6.dp)) {
                                 Text("第${mark.chapterIndex + 1}章：${mark.chapterTitle}", modifier = Modifier.weight(1f))
                                 Text("跳转", color = Color(0xFF1E88E5))
                             }
@@ -324,28 +385,7 @@ private fun ReaderScreen(
                 }
             }
 
-            OutlinedTextField(
-                value = query,
-                onValueChange = { query = it },
-                modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
-                leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
-                label = { Text("全书搜索关键词") },
-                singleLine = true,
-            )
-            if (query.isNotBlank()) {
-                val results = searchBook(book, query).take(5)
-                Column(Modifier.fillMaxWidth().padding(bottom = 8.dp)) {
-                    results.forEach { result ->
-                        Text(
-                            text = "第${result.first + 1}章：${result.second}",
-                            modifier = Modifier.clickable { chapterIndex = result.first; book.progressChapter = chapterIndex; onBookChanged() }.padding(vertical = 3.dp),
-                            color = Color(0xFF1E88E5),
-                            fontSize = 14.sp,
-                        )
-                    }
-                    if (results.isEmpty()) Text("没有找到匹配内容", color = Color.Gray)
-                }
-            }
+            if (showSettings) ReaderSettingsPanel(settings = settings, onChange = onSettingsChange)
 
             LazyColumn(modifier = Modifier.fillMaxSize()) {
                 item {
@@ -353,7 +393,7 @@ private fun ReaderScreen(
                         text = chapter?.title ?: "无章节",
                         color = settings.theme.foreground,
                         style = MaterialTheme.typography.titleLarge,
-                        modifier = Modifier.padding(bottom = 16.dp),
+                        modifier = Modifier.padding(bottom = 18.dp),
                     )
                 }
                 items(chapter?.paragraphs ?: emptyList()) { paragraph ->
@@ -365,6 +405,10 @@ private fun ReaderScreen(
                         fontFamily = FontFamily.Serif,
                         modifier = Modifier.padding(bottom = settings.paragraphSpacing.dp),
                     )
+                }
+                item {
+                    Spacer(Modifier.height(32.dp))
+                    Text("点击屏幕呼出菜单 · 音量键可翻章", color = Color.Gray, fontSize = 13.sp, modifier = Modifier.padding(bottom = 24.dp))
                 }
             }
         }
