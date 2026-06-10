@@ -45,22 +45,37 @@ actual fun openLatestReleasePage() {
 }
 
 private fun parseEpubBook(fileName: String, bytes: ByteArray): Book {
-    val chapters = mutableListOf<Chapter>()
+    val entries = mutableListOf<Pair<String, String>>()
+    var metadataTitle: String? = null
     ZipInputStream(ByteArrayInputStream(bytes)).use { zip ->
         while (true) {
             val entry = zip.nextEntry ?: break
-            val name = entry.name.lowercase()
-            if (!entry.isDirectory && (name.endsWith(".xhtml") || name.endsWith(".html") || name.endsWith(".htm"))) {
-                val html = zip.readBytes().toString(Charsets.UTF_8)
-                val text = htmlToText(html)
-                val paragraphs = text.lines().map { it.trim() }.filter { it.isNotBlank() }
-                if (paragraphs.isNotEmpty()) {
-                    val title = paragraphs.firstOrNull()?.take(60)?.ifBlank { entry.name.substringAfterLast('/') }
-                        ?: entry.name.substringAfterLast('/')
-                    chapters.add(Chapter(title, paragraphs.drop(if (paragraphs.size > 1) 1 else 0).ifEmpty { paragraphs }))
+            val name = entry.name
+            val lower = name.lowercase()
+            if (!entry.isDirectory) {
+                val data = zip.readBytes()
+                if (lower.endsWith(".opf")) {
+                    val opf = data.toString(Charsets.UTF_8)
+                    metadataTitle = Regex("<dc:title[^>]*>([\\s\\S]*?)</dc:title>", RegexOption.IGNORE_CASE)
+                        .find(opf)?.groupValues?.getOrNull(1)?.let { htmlToText(it).trim() }?.takeIf { it.isNotBlank() }
+                }
+                if (lower.endsWith(".xhtml") || lower.endsWith(".html") || lower.endsWith(".htm")) {
+                    entries.add(name to data.toString(Charsets.UTF_8))
                 }
             }
             zip.closeEntry()
+        }
+    }
+    val chapters = entries.sortedBy { it.first }.mapNotNull { (entryName, html) ->
+        val heading = Regex("<h[1-6][^>]*>([\\s\\S]*?)</h[1-6]>", RegexOption.IGNORE_CASE)
+            .find(html)?.groupValues?.getOrNull(1)?.let { htmlToText(it).trim() }
+        val text = htmlToText(html)
+        val paragraphs = text.lines().map { it.trim() }.filter { it.isNotBlank() }
+        if (paragraphs.isEmpty()) null else {
+            val title = heading?.takeIf { it.isNotBlank() }?.take(80)
+                ?: paragraphs.firstOrNull()?.take(60)?.takeIf { it.isNotBlank() }
+                ?: entryName.substringAfterLast('/').substringBeforeLast('.')
+            Chapter(title, paragraphs.drop(if (paragraphs.size > 1 && paragraphs.first() == title) 1 else 0).ifEmpty { paragraphs })
         }
     }
     val finalChapters = chapters.ifEmpty {
@@ -68,7 +83,7 @@ private fun parseEpubBook(fileName: String, bytes: ByteArray): Book {
     }
     return Book(
         id = "epub-${kotlin.math.abs((fileName + bytes.size).hashCode())}-${currentTimestamp()}",
-        title = fileName.substringBeforeLast('.').ifBlank { "EPUB 电子书" },
+        title = metadataTitle ?: fileName.substringBeforeLast('.').ifBlank { "EPUB 电子书" },
         format = BookFormat.EPUB,
         sourceText = "EPUB:${fileName}:${bytes.size}",
         fileName = fileName,
