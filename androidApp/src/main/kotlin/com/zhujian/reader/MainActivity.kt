@@ -4,6 +4,7 @@ import android.os.Bundle
 import android.view.KeyEvent
 import android.view.WindowInsets
 import android.view.WindowInsetsController
+import androidx.activity.addCallback
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
@@ -27,6 +28,13 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         initializePlatform(this)
         ReaderDisplayBridge.onFullscreenChanged = { enabled -> setReaderFullscreen(enabled) }
+        onBackPressedDispatcher.addCallback(this) {
+            val handled = ReaderBackBridge.onBack?.invoke() ?: false
+            if (!handled) {
+                isEnabled = false
+                onBackPressedDispatcher.onBackPressed()
+            }
+        }
         setContent {
             NovelReaderProApp(platformName = "Android") { callback ->
                 importCallback = callback
