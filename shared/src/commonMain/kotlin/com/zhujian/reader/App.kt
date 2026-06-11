@@ -492,8 +492,9 @@ private fun ReaderScreen(
                 }
                 if (!showControls && settings.pageTurnMode != PageTurnMode.None) {
                     Row(modifier = Modifier.fillMaxSize()) {
-                        Box(modifier = Modifier.weight(1f).fillMaxHeight().clickable { goPrevious() })
-                        Box(modifier = Modifier.weight(1f).fillMaxHeight().clickable { goNext() })
+                        Box(modifier = Modifier.weight(0.3f).fillMaxHeight().clickable { goPrevious() })
+                        Box(modifier = Modifier.weight(0.4f).fillMaxHeight().clickable { showControls = true })
+                        Box(modifier = Modifier.weight(0.3f).fillMaxHeight().clickable { goNext() })
                     }
                 }
             }
