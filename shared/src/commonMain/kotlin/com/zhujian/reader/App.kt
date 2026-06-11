@@ -64,6 +64,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateListOf
@@ -328,40 +329,21 @@ private fun ReaderScreen(
     val textMeasurer = rememberTextMeasurer()
     val density = LocalDensity.current
 
-    // Paginate: split chapter paragraphs into pages that fit the screen
-    val pages: List<List<String>> = remember(chapterIndex, settings.fontSize, settings.lineHeight, settings.paragraphSpacing, settings.font, settings.margin) {
-        val paragraphs = chapter?.paragraphs ?: emptyList()
-        paginateChapter(paragraphs, settings, textMeasurer, density)
-    }
+    var pages by remember { mutableStateOf<List<List<String>>>(emptyList()) }
+    var totalPages by remember { mutableIntStateOf(1) }
 
-    // When coming from previous chapter, jump to last page
-    LaunchedEffect(pages.size) {
-        if (needLastPage) {
-            currentPage = (pages.size - 1).coerceAtLeast(0)
-            needLastPage = false
-        }
-    }
-
-    // Page-based navigation
     fun goPrevious() {
-        if (currentPage > 0) {
-            currentPage--
-        } else if (chapterIndex > 0) {
-            needLastPage = true
-            chapterIndex--
-            book.progressChapter = chapterIndex
-            onBookChanged()
+        if (currentPage > 0) currentPage--
+        else if (chapterIndex > 0) {
+            needLastPage = true; chapterIndex--; currentPage = 999
+            book.progressChapter = chapterIndex; onBookChanged()
         }
     }
-
     fun goNext() {
-        if (currentPage < pages.lastIndex) {
-            currentPage++
-        } else if (chapterIndex < book.chapters.lastIndex) {
-            chapterIndex++
-            currentPage = 0
-            book.progressChapter = chapterIndex
-            onBookChanged()
+        if (currentPage < totalPages - 1) currentPage++
+        else if (chapterIndex < book.chapters.lastIndex) {
+            chapterIndex++; currentPage = 0
+            book.progressChapter = chapterIndex; onBookChanged()
         }
     }
 
@@ -388,14 +370,10 @@ private fun ReaderScreen(
         if (showOverlay) { delay(4000); showOverlay = false }
     }
 
-    val pageParagraphs = pages.getOrElse(currentPage) { emptyList() }
-    val totalPages = pages.size.coerceAtLeast(1)
-
     BoxWithConstraints(
         modifier = Modifier
             .fillMaxSize()
             .background(displayBackground)
-            // Tap: left=prev page, center=toggle overlay, right=next page
             .pointerInput(Unit) {
                 detectTapGestures { offset ->
                     val w = size.width.toFloat()
@@ -406,7 +384,6 @@ private fun ReaderScreen(
                     }
                 }
             }
-            // Horizontal swipe for page turn
             .pointerInput(settings.pageTurnMode) {
                 if (settings.pageTurnMode != PageTurnMode.None) {
                     detectHorizontalDragGestures(
@@ -420,11 +397,32 @@ private fun ReaderScreen(
     ) {
         val statusBarH = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
 
-        // Page content area — fills full height, uses proper text measurement
+        // Compute available text area using REAL screen dimensions
+        val topPad = if (currentPage == 0) statusBarH + 28.dp else statusBarH + 8.dp
+        val topPadPx = with(density) { topPad.toPx() }
+        val marginPx = settings.margin * density.density
+        val footerPx = with(density) { 28.dp.toPx() }
+        val pageHeight = constraints.maxHeight.toFloat() - topPadPx - marginPx * 2 - footerPx
+        val pageWidth = constraints.maxWidth.toFloat() - marginPx * 2
+
+        // Paginate
+        SideEffect {
+            val paras = chapter?.paragraphs ?: emptyList()
+            pages = paginateChapter(paras, settings, textMeasurer, density, pageHeight, pageWidth)
+            totalPages = pages.size.coerceAtLeast(1)
+            if (needLastPage) {
+                currentPage = (pages.size - 1).coerceAtLeast(0)
+                needLastPage = false
+            }
+        }
+
+        val pageParagraphs = pages.getOrElse(currentPage) { emptyList() }
+
+        // Page content
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(top = statusBarH + if (currentPage == 0) 28.dp else 8.dp)
+                .padding(top = topPad)
                 .padding(settings.margin.dp)
                 .padding(bottom = 32.dp)
         ) {
@@ -584,14 +582,14 @@ private fun paginateChapter(
     settings: ReaderSettings,
     textMeasurer: TextMeasurer,
     density: Density,
+    pageHeightPx: Float,
+    maxWidthPx: Float,
 ): List<List<String>> {
     val style = TextStyle(
         fontSize = settings.fontSize.sp,
         lineHeight = (settings.fontSize * settings.lineHeight).sp,
         fontFamily = settings.font.family,
     )
-    val pageHeightPx = with(density) { 580.dp.toPx() }
-    val maxWidthPx = with(density) { 320.dp.toPx() }
 
     val pages = mutableListOf<List<String>>()
     val currentPage = mutableListOf<String>()
