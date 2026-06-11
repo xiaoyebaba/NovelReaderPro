@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
@@ -55,7 +56,7 @@ import kotlin.math.abs
 import kotlin.math.roundToInt
 
 private const val APP_NAME = "青简阅读"
-private const val APP_VERSION = "0.5.0"
+private const val APP_VERSION = "0.6.0"
 
 data class Book(
     val id: String,
@@ -71,6 +72,19 @@ data class Book(
 )
 
 enum class BookFormat { TXT, EPUB, PDF, MOBI, AZW3 }
+
+enum class PageTurnMode(val label: String) {
+    None("无动画"),
+    Slide("滑动"),
+    Simulation("仿真翻页")
+}
+
+enum class ReaderFont(val label: String, val family: FontFamily) {
+    Serif("宋体/衬线", FontFamily.Serif),
+    Sans("黑体/无衬线", FontFamily.SansSerif),
+    Mono("等宽", FontFamily.Monospace),
+    Cursive("手写", FontFamily.Cursive)
+}
 
 data class Chapter(
     val title: String,
@@ -89,6 +103,12 @@ private data class ReaderSettings(
     val paragraphSpacing: Float = 10f,
     val margin: Float = 20f,
     val theme: ReaderTheme = ReaderTheme.EyeCare,
+    val font: ReaderFont = ReaderFont.Serif,
+    val pageTurnMode: PageTurnMode = PageTurnMode.None,
+    val brightness: Float = 1.0f,
+    val colorTemperature: Float = 0.5f,
+    val eyeCareSoft: Boolean = true,
+    val fullscreen: Boolean = false,
     val volumeKeyTurnPage: Boolean = true,
 )
 
@@ -113,6 +133,10 @@ object ReaderKeyBridge {
     var onPrevious: (() -> Unit)? = null
     var onNext: (() -> Unit)? = null
     var volumeKeyEnabled: Boolean = true
+}
+
+object ReaderDisplayBridge {
+    var onFullscreenChanged: ((Boolean) -> Unit)? = null
 }
 
 @Composable
@@ -164,6 +188,7 @@ fun NovelReaderProApp(
                     onSettingsChange = {
                         settings = it
                         ReaderKeyBridge.volumeKeyEnabled = it.volumeKeyTurnPage
+                        ReaderDisplayBridge.onFullscreenChanged?.invoke(it.fullscreen)
                         saveSettings(it)
                     },
                     onBookChanged = { saveBooks(books) },
@@ -199,7 +224,7 @@ private fun BookshelfScreen(
         },
     ) { padding ->
         Column(modifier = Modifier.fillMaxSize().padding(padding).padding(16.dp)) {
-            Text("v$APP_VERSION：优化小说阅读体验：正文优先、点击呼出菜单、搜索/书签/设置按需打开。", color = Color.Gray)
+            Text("v$APP_VERSION：补齐字体、翻页模式、亮度/色温、全屏、目录跳转、剩余阅读时长。", color = Color.Gray)
             Spacer(Modifier.height(16.dp))
             if (books.isEmpty()) {
                 Card(modifier = Modifier.fillMaxWidth()) {
@@ -252,11 +277,15 @@ private fun ReaderScreen(
     var showControls by remember { mutableStateOf(false) }
     var showSettings by remember { mutableStateOf(false) }
     var showBookmarks by remember { mutableStateOf(false) }
+    var showCatalog by remember { mutableStateOf(false) }
     var showSearch by remember { mutableStateOf(false) }
     var showUpdateDialog by remember { mutableStateOf(false) }
     var query by remember { mutableStateOf("") }
     val chapter = book.chapters.getOrNull(chapterIndex)
     val total = book.chapters.size.coerceAtLeast(1)
+    val percent = ((chapterIndex + 1) * 100f / total).roundToInt()
+    val remainingChapters = (total - chapterIndex - 1).coerceAtLeast(0)
+    val estimatedMinutesLeft = (remainingChapters * 4).coerceAtLeast(0)
 
     fun goPrevious() {
         if (chapterIndex > 0) {
@@ -278,6 +307,9 @@ private fun ReaderScreen(
     ReaderKeyBridge.onPrevious = { goPrevious() }
     ReaderKeyBridge.onNext = { goNext() }
     book.progressChapter = chapterIndex
+    val warmth = settings.colorTemperature
+    val displayBackground = blendColor(settings.theme.background, if (warmth >= 0.5f) Color(0xFFFFE0B2) else Color(0xFFE3F2FD), kotlin.math.abs(warmth - 0.5f) * 0.45f)
+    val brightnessOverlay = if (settings.brightness < 0.98f) Color.Black.copy(alpha = (1f - settings.brightness).coerceIn(0f, 0.65f)) else Color.Transparent
 
     if (showUpdateDialog) {
         AlertDialog(
@@ -298,9 +330,10 @@ private fun ReaderScreen(
                     title = { Text(book.title) },
                     navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.Default.ArrowBack, contentDescription = "返回") } },
                     actions = {
-                        IconButton(onClick = { showSearch = !showSearch; showBookmarks = false; showSettings = false }) { Icon(Icons.Default.Search, contentDescription = "搜索") }
-                        IconButton(onClick = { showBookmarks = !showBookmarks; showSearch = false; showSettings = false }) { Icon(Icons.Default.Bookmark, contentDescription = "书签") }
-                        IconButton(onClick = { showSettings = !showSettings; showSearch = false; showBookmarks = false }) { Icon(Icons.Default.Settings, contentDescription = "设置") }
+                        IconButton(onClick = { showCatalog = !showCatalog; showSearch = false; showBookmarks = false; showSettings = false }) { Text("目录") }
+                        IconButton(onClick = { showSearch = !showSearch; showCatalog = false; showBookmarks = false; showSettings = false }) { Icon(Icons.Default.Search, contentDescription = "搜索") }
+                        IconButton(onClick = { showBookmarks = !showBookmarks; showCatalog = false; showSearch = false; showSettings = false }) { Icon(Icons.Default.Bookmark, contentDescription = "书签") }
+                        IconButton(onClick = { showSettings = !showSettings; showCatalog = false; showSearch = false; showBookmarks = false }) { Icon(Icons.Default.Settings, contentDescription = "设置") }
                     },
                 )
             }
@@ -313,8 +346,8 @@ private fun ReaderScreen(
                             Button(onClick = { goPrevious() }, enabled = chapterIndex > 0) { Text("上一章") }
                             Spacer(Modifier.width(12.dp))
                             Column(modifier = Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally) {
-                                Text("${chapterIndex + 1}/$total 章")
-                                Text("${((chapterIndex + 1) * 100f / total).roundToInt()}%", color = Color.Gray, fontSize = 13.sp)
+                                Text("${chapterIndex + 1}/$total 章 · $percent%")
+                                Text("约剩 ${estimatedMinutesLeft} 分钟 · ${settings.pageTurnMode.label}", color = Color.Gray, fontSize = 13.sp)
                             }
                             Spacer(Modifier.width(12.dp))
                             Button(onClick = { goNext() }, enabled = chapterIndex < book.chapters.lastIndex) { Text("下一章") }
@@ -338,7 +371,7 @@ private fun ReaderScreen(
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .background(settings.theme.background)
+                .background(displayBackground)
                 .padding(padding)
                 .padding(settings.margin.dp)
                 .clickable { showControls = !showControls },
@@ -365,6 +398,24 @@ private fun ReaderScreen(
                                 )
                             }
                             if (results.isEmpty()) Text("没有找到匹配内容", color = Color.Gray)
+                        }
+                    }
+                }
+            }
+
+            if (showCatalog) {
+                Card(modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp)) {
+                    Column(Modifier.padding(12.dp)) {
+                        Text("目录", style = MaterialTheme.typography.titleMedium)
+                        LazyColumn(modifier = Modifier.fillMaxWidth().height(220.dp)) {
+                            items(book.chapters.size) { index ->
+                                Text(
+                                    text = if (index == chapterIndex) "▶ ${index + 1}. ${book.chapters[index].title}" else "${index + 1}. ${book.chapters[index].title}",
+                                    modifier = Modifier.fillMaxWidth().clickable { chapterIndex = index; book.progressChapter = index; onBookChanged(); showCatalog = false }.padding(vertical = 6.dp),
+                                    color = if (index == chapterIndex) Color(0xFF1E88E5) else settings.theme.foreground,
+                                    fontSize = 15.sp,
+                                )
+                            }
                         }
                     }
                 }
@@ -402,7 +453,7 @@ private fun ReaderScreen(
                         color = settings.theme.foreground,
                         fontSize = settings.fontSize.sp,
                         lineHeight = (settings.fontSize * settings.lineHeight).sp,
-                        fontFamily = FontFamily.Serif,
+                        fontFamily = settings.font.family,
                         modifier = Modifier.padding(bottom = settings.paragraphSpacing.dp),
                     )
                 }
@@ -419,16 +470,37 @@ private fun ReaderScreen(
 private fun ReaderSettingsPanel(settings: ReaderSettings, onChange: (ReaderSettings) -> Unit) {
     Card(modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
         Column(Modifier.padding(12.dp)) {
+            Text("阅读设置", style = MaterialTheme.typography.titleMedium)
+            Spacer(Modifier.height(8.dp))
+            Text("字体")
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                ReaderFont.values().forEach { font ->
+                    TextButton(onClick = { onChange(settings.copy(font = font)) }) { Text(if (settings.font == font) "✓ ${font.label}" else font.label) }
+                }
+            }
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Icon(Icons.Default.FormatSize, contentDescription = null)
                 Spacer(Modifier.width(8.dp))
                 Text("字号：${settings.fontSize.roundToInt()}")
             }
-            Slider(value = settings.fontSize, onValueChange = { onChange(settings.copy(fontSize = it)) }, valueRange = 14f..34f)
+            Slider(value = settings.fontSize, onValueChange = { onChange(settings.copy(fontSize = it)) }, valueRange = 14f..36f)
             Text("行距：${settings.lineHeight.roundToOneDecimal()}")
-            Slider(value = settings.lineHeight, onValueChange = { onChange(settings.copy(lineHeight = it)) }, valueRange = 1.1f..2.4f)
+            Slider(value = settings.lineHeight, onValueChange = { onChange(settings.copy(lineHeight = it)) }, valueRange = 1.1f..2.6f)
+            Text("段距：${settings.paragraphSpacing.roundToInt()}")
+            Slider(value = settings.paragraphSpacing, onValueChange = { onChange(settings.copy(paragraphSpacing = it)) }, valueRange = 2f..28f)
             Text("页边距：${settings.margin.roundToInt()}")
-            Slider(value = settings.margin, onValueChange = { onChange(settings.copy(margin = it)) }, valueRange = 8f..48f)
+            Slider(value = settings.margin, onValueChange = { onChange(settings.copy(margin = it)) }, valueRange = 4f..56f)
+            Text("亮度：${(settings.brightness * 100).roundToInt()}%")
+            Slider(value = settings.brightness, onValueChange = { onChange(settings.copy(brightness = it)) }, valueRange = 0.35f..1.0f)
+            Text("色温：${(settings.colorTemperature * 100).roundToInt()}%（冷 ← → 暖）")
+            Slider(value = settings.colorTemperature, onValueChange = { onChange(settings.copy(colorTemperature = it)) }, valueRange = 0f..1f)
+            Text("翻页模式")
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                PageTurnMode.values().forEach { mode ->
+                    TextButton(onClick = { onChange(settings.copy(pageTurnMode = mode)) }) { Text(if (settings.pageTurnMode == mode) "✓ ${mode.label}" else mode.label) }
+                }
+            }
+            Text("主题背景")
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
                 ReaderTheme.All.forEach { theme ->
                     Box(modifier = Modifier.background(theme.background).clickable { onChange(settings.copy(theme = theme)) }.padding(8.dp)) {
@@ -437,11 +509,26 @@ private fun ReaderSettingsPanel(settings: ReaderSettings, onChange: (ReaderSetti
                 }
             }
             Spacer(Modifier.height(8.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                Button(onClick = { onChange(settings.copy(eyeCareSoft = !settings.eyeCareSoft)) }) { Text(if (settings.eyeCareSoft) "护眼柔光：开" else "护眼柔光：关") }
+                Button(onClick = { onChange(settings.copy(fullscreen = !settings.fullscreen)) }) { Text(if (settings.fullscreen) "全屏：开" else "全屏：关") }
+            }
+            Spacer(Modifier.height(8.dp))
             Button(onClick = { onChange(settings.copy(volumeKeyTurnPage = !settings.volumeKeyTurnPage)) }) {
                 Text(if (settings.volumeKeyTurnPage) "音量键翻章：开" else "音量键翻章：关")
             }
         }
     }
+}
+
+private fun blendColor(base: Color, overlay: Color, amount: Float): Color {
+    val a = amount.coerceIn(0f, 1f)
+    return Color(
+        red = base.red * (1f - a) + overlay.red * a,
+        green = base.green * (1f - a) + overlay.green * a,
+        blue = base.blue * (1f - a) + overlay.blue * a,
+        alpha = 1f,
+    )
 }
 
 fun parseTxtBook(title: String, content: String, fileName: String = ""): Book {
@@ -494,7 +581,7 @@ private fun sampleBook(): Book = parseTxtBook(
         软件目标是纯净、离线、无广告、权限精简。
 
         第二章 后续路线
-        v0.4.0 优化 EPUB 目录、标题和重启后的章节持久化；Release 每次新建，不覆盖旧版本。
+        v0.6.0 补齐阅读排版、字体、亮度、色温、全屏开关、目录跳转和剩余阅读时长。
         功能会按版本逐步做扎实，不做臃肿半成品。
     """.trimIndent(),
 )
@@ -518,6 +605,12 @@ private fun loadSettings(): ReaderSettings {
         paragraphSpacing = map["paragraphSpacing"]?.toFloatOrNull() ?: 10f,
         margin = map["margin"]?.toFloatOrNull() ?: 20f,
         theme = ReaderTheme.byId(map["theme"].orEmpty()),
+        font = map["font"]?.let { runCatching { ReaderFont.valueOf(it) }.getOrNull() } ?: ReaderFont.Serif,
+        pageTurnMode = map["pageTurnMode"]?.let { runCatching { PageTurnMode.valueOf(it) }.getOrNull() } ?: PageTurnMode.None,
+        brightness = map["brightness"]?.toFloatOrNull() ?: 1.0f,
+        colorTemperature = map["colorTemperature"]?.toFloatOrNull() ?: 0.5f,
+        eyeCareSoft = map["eyeCareSoft"]?.toBooleanStrictOrNull() ?: true,
+        fullscreen = map["fullscreen"]?.toBooleanStrictOrNull() ?: false,
         volumeKeyTurnPage = map["volumeKeyTurnPage"]?.toBooleanStrictOrNull() ?: true,
     )
 }
@@ -529,6 +622,12 @@ private fun saveSettings(settings: ReaderSettings) {
         "paragraphSpacing=${settings.paragraphSpacing}",
         "margin=${settings.margin}",
         "theme=${settings.theme.id}",
+        "font=${settings.font.name}",
+        "pageTurnMode=${settings.pageTurnMode.name}",
+        "brightness=${settings.brightness}",
+        "colorTemperature=${settings.colorTemperature}",
+        "eyeCareSoft=${settings.eyeCareSoft}",
+        "fullscreen=${settings.fullscreen}",
         "volumeKeyTurnPage=${settings.volumeKeyTurnPage}",
     ).joinToString("\n"))
 }
@@ -624,7 +723,7 @@ fun parsePdfPlaceholder(fileName: String): Book = Book(
             "PDF 阅读",
             listOf(
                 "已成功导入 PDF：$fileName",
-                "当前 v0.4.0 先完成 PDF 文件识别、入库、进度/书签框架接入。",
+                "当前 v0.6.0 先完成 PDF 文件识别、入库、进度/书签框架接入。",
                 "下一步会接入 PDF 页面渲染器，实现真正翻页、缩放和页码记忆。"
             )
         )
