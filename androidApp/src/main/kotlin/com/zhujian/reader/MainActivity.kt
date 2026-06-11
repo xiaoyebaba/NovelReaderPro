@@ -2,6 +2,8 @@ package com.zhujian.reader
 
 import android.os.Bundle
 import android.view.KeyEvent
+import android.view.WindowInsets
+import android.view.WindowInsetsController
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
@@ -24,10 +26,23 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         initializePlatform(this)
+        ReaderDisplayBridge.onFullscreenChanged = { enabled -> setReaderFullscreen(enabled) }
         setContent {
             NovelReaderProApp(platformName = "Android") { callback ->
                 importCallback = callback
                 openDocument.launch(arrayOf("text/plain", "application/epub+zip", "application/pdf", "application/octet-stream", "*/*"))
+            }
+        }
+    }
+
+    private fun setReaderFullscreen(enabled: Boolean) {
+        window.decorView.post {
+            val controller = window.insetsController ?: return@post
+            if (enabled) {
+                controller.hide(WindowInsets.Type.statusBars())
+                controller.systemBarsBehavior = WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+            } else {
+                controller.show(WindowInsets.Type.statusBars())
             }
         }
     }
