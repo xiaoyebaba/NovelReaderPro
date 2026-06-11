@@ -1,7 +1,14 @@
 package com.zhujian.reader
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -35,6 +42,7 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
@@ -52,7 +60,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -343,9 +353,13 @@ private fun ReaderScreen(
 
     Scaffold(
         topBar = {
-            if (showControls) {
+            AnimatedVisibility(
+                visible = showControls,
+                enter = fadeIn() + slideInVertically { -it },
+                exit = fadeOut() + slideOutVertically { -it },
+            ) {
                 TopAppBar(
-                    title = { Text(book.title, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                    title = { Text(book.title, modifier = Modifier.horizontalScroll(rememberScrollState()), softWrap = false, fontSize = 18.sp) },
                     navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.Default.ArrowBack, contentDescription = "返回") } },
                     actions = {
                         IconButton(onClick = { showCatalog = !showCatalog; showSearch = false; showBookmarks = false; showSettings = false }) { Text("目录") }
@@ -357,145 +371,184 @@ private fun ReaderScreen(
             }
         },
         bottomBar = {
-            if (showControls) {
-                Card(modifier = Modifier.fillMaxWidth().padding(8.dp)) {
-                    Column(Modifier.padding(12.dp)) {
-                        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-                            Button(onClick = { goPrevious() }, enabled = chapterIndex > 0) { Text("上一章") }
-                            Spacer(Modifier.width(12.dp))
-                            Column(modifier = Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally) {
-                                Text("${chapterIndex + 1}/$total 章 · $percent%")
-                                Text("约剩 ${estimatedMinutesLeft} 分钟 · ${settings.pageTurnMode.label}", color = Color.Gray, fontSize = 13.sp)
+            AnimatedVisibility(
+                visible = showControls,
+                enter = fadeIn() + slideInVertically { it },
+                exit = fadeOut() + slideOutVertically { it },
+            ) {
+                Surface(tonalElevation = 3.dp, shadowElevation = 4.dp) {
+                    Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp)) {
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                            TextButton(onClick = { goPrevious() }, enabled = chapterIndex > 0) { Text("◀") }
+                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                Text("${chapterIndex + 1}/$total 章", fontSize = 14.sp)
+                                Text("约剩 ${estimatedMinutesLeft} 分钟", color = Color.Gray, fontSize = 12.sp)
                             }
-                            Spacer(Modifier.width(12.dp))
-                            Button(onClick = { goNext() }, enabled = chapterIndex < book.chapters.lastIndex) { Text("下一章") }
+                            TextButton(onClick = { goNext() }, enabled = chapterIndex < book.chapters.lastIndex) { Text("▶") }
                         }
-                        Spacer(Modifier.height(8.dp))
-                        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
                             val bookmarked = book.bookmarks.any { it.chapterIndex == chapterIndex }
-                            TextButton(onClick = {
+                            IconButton(onClick = {
                                 if (bookmarked) book.bookmarks.removeAll { it.chapterIndex == chapterIndex }
                                 else book.bookmarks.add(Bookmark(chapterIndex, chapter?.title ?: "第${chapterIndex + 1}章", currentTimestamp()))
                                 onBookChanged()
-                            }) { Text(if (bookmarked) "取消本章书签" else "加入本章书签") }
-                            Spacer(Modifier.weight(1f))
-                            Text("点击正文隐藏菜单", color = Color.Gray, fontSize = 13.sp)
+                            }) {
+                                Icon(
+                                    if (bookmarked) Icons.Default.Bookmark else Icons.Default.BookmarkBorder,
+                                    contentDescription = "书签",
+                                    tint = if (bookmarked) Color(0xFFFF9800) else LocalContentColor.current,
+                                )
+                            }
+                            TextButton(onClick = { showCatalog = !showCatalog }) { Text("目录") }
+                            IconButton(onClick = { showSettings = true }) { Icon(Icons.Default.Settings, "设置") }
                         }
                     }
                 }
             }
         },
     ) { padding ->
-        Column(
+        Box(
             modifier = Modifier
                 .fillMaxSize()
                 .background(displayBackground)
                 .padding(padding)
-                .padding(settings.margin.dp)
-                .clickable { showControls = !showControls },
-        ) {
-            if (showSearch) {
-                OutlinedTextField(
-                    value = query,
-                    onValueChange = { query = it },
-                    modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp),
-                    leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
-                    label = { Text("全书搜索关键词") },
-                    singleLine = true,
-                )
-                if (query.isNotBlank()) {
-                    val results = searchBook(book, query).take(6)
-                    Card(modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp)) {
-                        Column(Modifier.padding(10.dp)) {
-                            results.forEach { result ->
-                                Text(
-                                    text = "第${result.first + 1}章：${result.second}",
-                                    modifier = Modifier.clickable { chapterIndex = result.first; book.progressChapter = chapterIndex; onBookChanged(); showSearch = false }.padding(vertical = 4.dp),
-                                    color = Color(0xFF1E88E5),
-                                    fontSize = 14.sp,
-                                )
-                            }
-                            if (results.isEmpty()) Text("没有找到匹配内容", color = Color.Gray)
-                        }
-                    }
-                }
-            }
-
-            if (showCatalog) {
-                Card(modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp)) {
-                    Column(Modifier.padding(12.dp)) {
-                        Text("目录", style = MaterialTheme.typography.titleMedium)
-                        LazyColumn(modifier = Modifier.fillMaxWidth().height(220.dp)) {
-                            items(book.chapters.size) { index ->
-                                Text(
-                                    text = if (index == chapterIndex) "▶ ${index + 1}. ${book.chapters[index].title}" else "${index + 1}. ${book.chapters[index].title}",
-                                    modifier = Modifier.fillMaxWidth().clickable { chapterIndex = index; book.progressChapter = index; onBookChanged(); showCatalog = false }.padding(vertical = 6.dp),
-                                    color = if (index == chapterIndex) Color(0xFF1E88E5) else settings.theme.foreground,
-                                    fontSize = 15.sp,
-                                )
-                            }
-                        }
-                    }
-                }
-            }
-
-            if (showBookmarks) {
-                Card(modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp)) {
-                    Column(Modifier.padding(12.dp)) {
-                        Text("书签", style = MaterialTheme.typography.titleMedium)
-                        if (book.bookmarks.isEmpty()) Text("当前没有书签", color = Color.Gray)
-                        book.bookmarks.sortedBy { it.chapterIndex }.forEach { mark ->
-                            Row(modifier = Modifier.fillMaxWidth().clickable { chapterIndex = mark.chapterIndex; book.progressChapter = chapterIndex; onBookChanged(); showBookmarks = false }.padding(vertical = 6.dp)) {
-                                Text("第${mark.chapterIndex + 1}章：${mark.chapterTitle}", modifier = Modifier.weight(1f))
-                                Text("跳转", color = Color(0xFF1E88E5))
-                            }
-                        }
-                    }
-                }
-            }
-
-            if (showSettings) ReaderSettingsPanel(settings = settings, onChange = onSettingsChange, onDismiss = { showSettings = false })
-
-            Box(modifier = Modifier.fillMaxSize()) {
-                LazyColumn(modifier = Modifier.fillMaxSize()) {
-                    item {
-                        Text(
-                            text = chapter?.title ?: "无章节",
-                            color = settings.theme.foreground,
-                            style = MaterialTheme.typography.titleLarge,
-                            modifier = Modifier.padding(bottom = 18.dp),
-                        )
-                    }
-                    items(chapter?.paragraphs ?: emptyList()) { paragraph ->
-                        Text(
-                            text = paragraph,
-                            color = settings.theme.foreground,
-                            fontSize = settings.fontSize.sp,
-                            lineHeight = (settings.fontSize * settings.lineHeight).sp,
-                            fontFamily = settings.font.family,
-                            modifier = Modifier.padding(bottom = settings.paragraphSpacing.dp),
-                        )
-                    }
-                    item {
-                        Spacer(Modifier.height(32.dp))
-                        Text(
-                            when (settings.pageTurnMode) {
-                                PageTurnMode.None -> "点击屏幕呼出菜单 · 按钮/音量键翻章"
-                                PageTurnMode.Slide -> "左侧/右侧点击翻章 · 模拟滑动翻页手感"
-                                PageTurnMode.Simulation -> "左侧/右侧点击翻章 · 仿真翻页动画后续补齐"
+                .pointerInput(settings.pageTurnMode) {
+                    if (settings.pageTurnMode != PageTurnMode.None) {
+                        detectHorizontalDragGestures(
+                            onDragEnd = { },
+                            onDragCancel = { },
+                            onHorizontalDrag = { _, dragAmount ->
+                                // Swipe left → next chapter, swipe right → prev chapter
+                                if (dragAmount > 40f) goPrevious()
+                                else if (dragAmount < -40f) goNext()
                             },
-                            color = Color.Gray,
-                            fontSize = 13.sp,
-                            modifier = Modifier.padding(bottom = 24.dp),
                         )
                     }
-                }
-                if (!showControls && settings.pageTurnMode != PageTurnMode.None) {
-                    Row(modifier = Modifier.fillMaxSize()) {
-                        Box(modifier = Modifier.weight(0.3f).fillMaxHeight().clickable { goPrevious() })
-                        Box(modifier = Modifier.weight(0.4f).fillMaxHeight().clickable { showControls = true })
-                        Box(modifier = Modifier.weight(0.3f).fillMaxHeight().clickable { goNext() })
+                },
+        ) {
+            LazyColumn(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(settings.margin.dp)
+                    .clickable { showControls = !showControls },
+            ) {
+                if (showSearch) {
+                    item {
+                        OutlinedTextField(
+                            value = query,
+                            onValueChange = { query = it },
+                            modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp),
+                            leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
+                            label = { Text("全书搜索关键词") },
+                            singleLine = true,
+                        )
                     }
+                    if (query.isNotBlank()) {
+                        val results = searchBook(book, query).take(6)
+                        item {
+                            Card(modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp)) {
+                                Column(Modifier.padding(10.dp)) {
+                                    results.forEach { result ->
+                                        Text(
+                                            text = "第${result.first + 1}章：${result.second}",
+                                            modifier = Modifier.clickable { chapterIndex = result.first; book.progressChapter = chapterIndex; onBookChanged(); showSearch = false }.padding(vertical = 4.dp),
+                                            color = Color(0xFF1E88E5),
+                                            fontSize = 14.sp,
+                                        )
+                                    }
+                                    if (results.isEmpty()) Text("没有找到匹配内容", color = Color.Gray)
+                                }
+                            }
+                        }
+                    }
+                }
+
+                if (showCatalog) {
+                    item {
+                        Card(modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp)) {
+                            Column(Modifier.padding(12.dp)) {
+                                Text("目录", style = MaterialTheme.typography.titleMedium)
+                                LazyColumn(modifier = Modifier.fillMaxWidth().height(220.dp)) {
+                                    items(book.chapters.size) { index ->
+                                        Text(
+                                            text = if (index == chapterIndex) "▶ ${index + 1}. ${book.chapters[index].title}" else "${index + 1}. ${book.chapters[index].title}",
+                                            modifier = Modifier.fillMaxWidth().clickable { chapterIndex = index; book.progressChapter = index; onBookChanged(); showCatalog = false }.padding(vertical = 6.dp),
+                                            color = if (index == chapterIndex) Color(0xFF1E88E5) else settings.theme.foreground,
+                                            fontSize = 15.sp,
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                if (showBookmarks) {
+                    item {
+                        Card(modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp)) {
+                            Column(Modifier.padding(12.dp)) {
+                                Text("书签", style = MaterialTheme.typography.titleMedium)
+                                if (book.bookmarks.isEmpty()) Text("当前没有书签", color = Color.Gray)
+                                book.bookmarks.sortedBy { it.chapterIndex }.forEach { mark ->
+                                    Row(modifier = Modifier.fillMaxWidth().clickable { chapterIndex = mark.chapterIndex; book.progressChapter = chapterIndex; onBookChanged(); showBookmarks = false }.padding(vertical = 6.dp)) {
+                                        Text("第${mark.chapterIndex + 1}章：${mark.chapterTitle}", modifier = Modifier.weight(1f))
+                                        Text("跳转", color = Color(0xFF1E88E5))
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                if (showSettings) {
+                    item { ReaderSettingsPanel(settings = settings, onChange = onSettingsChange, onDismiss = { showSettings = false }) }
+                }
+
+                // Chapter title
+                item {
+                    Text(
+                        text = chapter?.title ?: "无章节",
+                        color = settings.theme.foreground,
+                        style = MaterialTheme.typography.titleLarge,
+                        modifier = Modifier.padding(bottom = 18.dp),
+                    )
+                }
+                // Paragraphs
+                items(chapter?.paragraphs ?: emptyList()) { paragraph ->
+                    Text(
+                        text = paragraph,
+                        color = settings.theme.foreground,
+                        fontSize = settings.fontSize.sp,
+                        lineHeight = (settings.fontSize * settings.lineHeight).sp,
+                        fontFamily = settings.font.family,
+                        modifier = Modifier.padding(bottom = settings.paragraphSpacing.dp),
+                    )
+                }
+                // Chapter end: next-chapter button + hint
+                item {
+                    Spacer(Modifier.height(24.dp))
+                    Text("—— 本章完 ——", color = Color.Gray, fontSize = 14.sp, modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp), textAlign = TextAlign.Center)
+                    if (chapterIndex < book.chapters.lastIndex) {
+                        Button(
+                            onClick = { goNext(); showControls = false },
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = androidx.compose.material3.ButtonDefaults.buttonColors(containerColor = settings.theme.foreground.copy(alpha = 0.08f)),
+                        ) {
+                            Text("下一章 ▶  ${book.chapters.getOrNull(chapterIndex + 1)?.title ?: ""}", color = settings.theme.foreground)
+                        }
+                    }
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        when (settings.pageTurnMode) {
+                            PageTurnMode.None -> "点击屏幕呼出菜单 · 按钮/音量键翻章"
+                            PageTurnMode.Slide -> "左右滑动翻章 · 点击屏幕呼出菜单"
+                            PageTurnMode.Simulation -> "左右滑动翻章 · 仿真动画后续补齐"
+                        },
+                        color = Color.Gray,
+                        fontSize = 12.sp,
+                        modifier = Modifier.fillMaxWidth().padding(bottom = 24.dp),
+                        textAlign = TextAlign.Center,
+                    )
                 }
             }
         }
